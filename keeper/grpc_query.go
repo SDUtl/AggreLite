@@ -3,167 +3,187 @@ package keeper
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/store/prefix"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
+
 	clienttypes "github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
-	connectiontypes "github.com/T-ragon/ibc-go/v9/modules/core/03-connection/types"
-	channeltypes "github.com/T-ragon/ibc-go/v9/modules/core/04-channel/types"
+	"github.com/T-ragon/ibc-go/v9/modules/core/03-connection/types"
+	host "github.com/T-ragon/ibc-go/v9/modules/core/24-host"
 )
 
-// ClientState implements the IBC QueryServer interface
-func (k Keeper) ClientState(c context.Context, req *clienttypes.QueryClientStateRequest) (*clienttypes.QueryClientStateResponse, error) {
-	return k.ClientKeeper.ClientState(c, req)
+var _ types.QueryServer = (*Keeper)(nil)
+
+// Connection implements the Query/Connection gRPC method
+func (k Keeper) Connection(c context.Context, req *types.QueryConnectionRequest) (*types.QueryConnectionResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	if err := host.ConnectionIdentifierValidator(req.ConnectionId); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	ctx := sdk.UnwrapSDKContext(c)
+	connection, found := k.GetConnection(ctx, req.ConnectionId)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrap(types.ErrConnectionNotFound, req.ConnectionId).Error(),
+		)
+	}
+
+	return &types.QueryConnectionResponse{
+		Connection:  &connection,
+		ProofHeight: clienttypes.GetSelfHeight(ctx),
+	}, nil
 }
 
-// ClientStates implements the IBC QueryServer interface
-func (k Keeper) ClientStates(c context.Context, req *clienttypes.QueryClientStatesRequest) (*clienttypes.QueryClientStatesResponse, error) {
-	return k.ClientKeeper.ClientStates(c, req)
+// Connections implements the Query/Connections gRPC method
+func (k Keeper) Connections(c context.Context, req *types.QueryConnectionsRequest) (*types.QueryConnectionsResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	ctx := sdk.UnwrapSDKContext(c)
+
+	var connections []*types.IdentifiedConnection
+	store := prefix.NewStore(ctx.KVStore(k.storeKey), []byte(host.KeyConnectionPrefix))
+
+	pageRes, err := query.Paginate(store, req.Pagination, func(key, value []byte) error {
+		var result types.ConnectionEnd
+		if err := k.cdc.Unmarshal(value, &result); err != nil {
+			return err
+		}
+
+		connectionID, err := host.ParseConnectionPath(string(key))
+		if err != nil {
+			return err
+		}
+
+		identifiedConnection := types.NewIdentifiedConnection(connectionID, result)
+		connections = append(connections, &identifiedConnection)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.QueryConnectionsResponse{
+		Connections: connections,
+		Pagination:  pageRes,
+		Height:      clienttypes.GetSelfHeight(ctx),
+	}, nil
 }
 
-// ConsensusState implements the IBC QueryServer interface
-func (k Keeper) ConsensusState(c context.Context, req *clienttypes.QueryConsensusStateRequest) (*clienttypes.QueryConsensusStateResponse, error) {
-	return k.ClientKeeper.ConsensusState(c, req)
+// ClientConnections implements the Query/ClientConnections gRPC method
+func (k Keeper) ClientConnections(c context.Context, req *types.QueryClientConnectionsRequest) (*types.QueryClientConnectionsResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	if err := host.ClientIdentifierValidator(req.ClientId); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	ctx := sdk.UnwrapSDKContext(c)
+	clientConnectionPaths, found := k.GetClientConnectionPaths(ctx, req.ClientId)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrap(types.ErrClientConnectionPathsNotFound, req.ClientId).Error(),
+		)
+	}
+
+	return &types.QueryClientConnectionsResponse{
+		ConnectionPaths: clientConnectionPaths,
+		ProofHeight:     clienttypes.GetSelfHeight(ctx),
+	}, nil
 }
 
-// ConsensusStates implements the IBC QueryServer interface
-func (k Keeper) ConsensusStates(c context.Context, req *clienttypes.QueryConsensusStatesRequest) (*clienttypes.QueryConsensusStatesResponse, error) {
-	return k.ClientKeeper.ConsensusStates(c, req)
+// ConnectionClientState implements the Query/ConnectionClientState gRPC method
+func (k Keeper) ConnectionClientState(c context.Context, req *types.QueryConnectionClientStateRequest) (*types.QueryConnectionClientStateResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	if err := host.ConnectionIdentifierValidator(req.ConnectionId); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	ctx := sdk.UnwrapSDKContext(c)
+
+	connection, found := k.GetConnection(ctx, req.ConnectionId)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrapf(types.ErrConnectionNotFound, "connection-id: %s", req.ConnectionId).Error(),
+		)
+	}
+
+	clientState, found := k.clientKeeper.GetClientState(ctx, connection.ClientId)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrapf(clienttypes.ErrClientNotFound, "client-id: %s", connection.ClientId).Error(),
+		)
+	}
+
+	identifiedClientState := clienttypes.NewIdentifiedClientState(connection.ClientId, clientState)
+
+	height := clienttypes.GetSelfHeight(ctx)
+	return types.NewQueryConnectionClientStateResponse(identifiedClientState, nil, height), nil
 }
 
-// ConsensusStateHeights implements the IBC QueryServer interface
-func (k Keeper) ConsensusStateHeights(c context.Context, req *clienttypes.QueryConsensusStateHeightsRequest) (*clienttypes.QueryConsensusStateHeightsResponse, error) {
-	return k.ClientKeeper.ConsensusStateHeights(c, req)
+// ConnectionConsensusState implements the Query/ConnectionConsensusState gRPC method
+func (k Keeper) ConnectionConsensusState(c context.Context, req *types.QueryConnectionConsensusStateRequest) (*types.QueryConnectionConsensusStateResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "empty request")
+	}
+
+	if err := host.ConnectionIdentifierValidator(req.ConnectionId); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	ctx := sdk.UnwrapSDKContext(c)
+
+	connection, found := k.GetConnection(ctx, req.ConnectionId)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrapf(types.ErrConnectionNotFound, "connection-id: %s", req.ConnectionId).Error(),
+		)
+	}
+
+	height := clienttypes.NewHeight(req.RevisionNumber, req.RevisionHeight)
+	consensusState, found := k.clientKeeper.GetClientConsensusState(ctx, connection.ClientId, height)
+	if !found {
+		return nil, status.Error(
+			codes.NotFound,
+			errorsmod.Wrapf(clienttypes.ErrConsensusStateNotFound, "client-id: %s", connection.ClientId).Error(),
+		)
+	}
+
+	anyConsensusState, err := clienttypes.PackConsensusState(consensusState)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	proofHeight := clienttypes.GetSelfHeight(ctx)
+	return types.NewQueryConnectionConsensusStateResponse(connection.ClientId, anyConsensusState, height, nil, proofHeight), nil
 }
 
-// ClientStatus implements the IBC QueryServer interface
-func (k Keeper) ClientStatus(c context.Context, req *clienttypes.QueryClientStatusRequest) (*clienttypes.QueryClientStatusResponse, error) {
-	return k.ClientKeeper.ClientStatus(c, req)
-}
+// ConnectionParams implements the Query/ConnectionParams gRPC method.
+func (k Keeper) ConnectionParams(c context.Context, req *types.QueryConnectionParamsRequest) (*types.QueryConnectionParamsResponse, error) {
+	ctx := sdk.UnwrapSDKContext(c)
+	params := k.GetParams(ctx)
 
-// ClientParams implements the IBC QueryServer interface
-func (k Keeper) ClientParams(c context.Context, req *clienttypes.QueryClientParamsRequest) (*clienttypes.QueryClientParamsResponse, error) {
-	return k.ClientKeeper.ClientParams(c, req)
-}
-
-// UpgradedClientState implements the IBC QueryServer interface
-func (k Keeper) UpgradedClientState(c context.Context, req *clienttypes.QueryUpgradedClientStateRequest) (*clienttypes.QueryUpgradedClientStateResponse, error) {
-	return k.ClientKeeper.UpgradedClientState(c, req)
-}
-
-// UpgradedConsensusState implements the IBC QueryServer interface
-func (k Keeper) UpgradedConsensusState(c context.Context, req *clienttypes.QueryUpgradedConsensusStateRequest) (*clienttypes.QueryUpgradedConsensusStateResponse, error) {
-	return k.ClientKeeper.UpgradedConsensusState(c, req)
-}
-
-// Connection implements the IBC QueryServer interface
-func (k Keeper) Connection(c context.Context, req *connectiontypes.QueryConnectionRequest) (*connectiontypes.QueryConnectionResponse, error) {
-	return k.ConnectionKeeper.Connection(c, req)
-}
-
-// Connections implements the IBC QueryServer interface
-func (k Keeper) Connections(c context.Context, req *connectiontypes.QueryConnectionsRequest) (*connectiontypes.QueryConnectionsResponse, error) {
-	return k.ConnectionKeeper.Connections(c, req)
-}
-
-// ClientConnections implements the IBC QueryServer interface
-func (k Keeper) ClientConnections(c context.Context, req *connectiontypes.QueryClientConnectionsRequest) (*connectiontypes.QueryClientConnectionsResponse, error) {
-	return k.ConnectionKeeper.ClientConnections(c, req)
-}
-
-// ConnectionClientState implements the IBC QueryServer interface
-func (k Keeper) ConnectionClientState(c context.Context, req *connectiontypes.QueryConnectionClientStateRequest) (*connectiontypes.QueryConnectionClientStateResponse, error) {
-	return k.ConnectionKeeper.ConnectionClientState(c, req)
-}
-
-// ConnectionConsensusState implements the IBC QueryServer interface
-func (k Keeper) ConnectionConsensusState(c context.Context, req *connectiontypes.QueryConnectionConsensusStateRequest) (*connectiontypes.QueryConnectionConsensusStateResponse, error) {
-	return k.ConnectionKeeper.ConnectionConsensusState(c, req)
-}
-
-// ConnectionParams implements the IBC QueryServer interface
-func (k Keeper) ConnectionParams(c context.Context, req *connectiontypes.QueryConnectionParamsRequest) (*connectiontypes.QueryConnectionParamsResponse, error) {
-	return k.ConnectionKeeper.ConnectionParams(c, req)
-}
-
-// Channel implements the IBC QueryServer interface
-func (k Keeper) Channel(c context.Context, req *channeltypes.QueryChannelRequest) (*channeltypes.QueryChannelResponse, error) {
-	return k.ChannelKeeper.Channel(c, req)
-}
-
-// Channels implements the IBC QueryServer interface
-func (k Keeper) Channels(c context.Context, req *channeltypes.QueryChannelsRequest) (*channeltypes.QueryChannelsResponse, error) {
-	return k.ChannelKeeper.Channels(c, req)
-}
-
-// ConnectionChannels implements the IBC QueryServer interface
-func (k Keeper) ConnectionChannels(c context.Context, req *channeltypes.QueryConnectionChannelsRequest) (*channeltypes.QueryConnectionChannelsResponse, error) {
-	return k.ChannelKeeper.ConnectionChannels(c, req)
-}
-
-// ChannelClientState implements the IBC QueryServer interface
-func (k Keeper) ChannelClientState(c context.Context, req *channeltypes.QueryChannelClientStateRequest) (*channeltypes.QueryChannelClientStateResponse, error) {
-	return k.ChannelKeeper.ChannelClientState(c, req)
-}
-
-// ChannelConsensusState implements the IBC QueryServer interface
-func (k Keeper) ChannelConsensusState(c context.Context, req *channeltypes.QueryChannelConsensusStateRequest) (*channeltypes.QueryChannelConsensusStateResponse, error) {
-	return k.ChannelKeeper.ChannelConsensusState(c, req)
-}
-
-// PacketCommitment implements the IBC QueryServer interface
-func (k Keeper) PacketCommitment(c context.Context, req *channeltypes.QueryPacketCommitmentRequest) (*channeltypes.QueryPacketCommitmentResponse, error) {
-	return k.ChannelKeeper.PacketCommitment(c, req)
-}
-
-// PacketCommitments implements the IBC QueryServer interface
-func (k Keeper) PacketCommitments(c context.Context, req *channeltypes.QueryPacketCommitmentsRequest) (*channeltypes.QueryPacketCommitmentsResponse, error) {
-	return k.ChannelKeeper.PacketCommitments(c, req)
-}
-
-// PacketReceipt implements the IBC QueryServer interface
-func (k Keeper) PacketReceipt(c context.Context, req *channeltypes.QueryPacketReceiptRequest) (*channeltypes.QueryPacketReceiptResponse, error) {
-	return k.ChannelKeeper.PacketReceipt(c, req)
-}
-
-// PacketAcknowledgement implements the IBC QueryServer interface
-func (k Keeper) PacketAcknowledgement(c context.Context, req *channeltypes.QueryPacketAcknowledgementRequest) (*channeltypes.QueryPacketAcknowledgementResponse, error) {
-	return k.ChannelKeeper.PacketAcknowledgement(c, req)
-}
-
-// PacketAcknowledgements implements the IBC QueryServer interface
-func (k Keeper) PacketAcknowledgements(c context.Context, req *channeltypes.QueryPacketAcknowledgementsRequest) (*channeltypes.QueryPacketAcknowledgementsResponse, error) {
-	return k.ChannelKeeper.PacketAcknowledgements(c, req)
-}
-
-// UnreceivedPackets implements the IBC QueryServer interface
-func (k Keeper) UnreceivedPackets(c context.Context, req *channeltypes.QueryUnreceivedPacketsRequest) (*channeltypes.QueryUnreceivedPacketsResponse, error) {
-	return k.ChannelKeeper.UnreceivedPackets(c, req)
-}
-
-// UnreceivedAcks implements the IBC QueryServer interface
-func (k Keeper) UnreceivedAcks(c context.Context, req *channeltypes.QueryUnreceivedAcksRequest) (*channeltypes.QueryUnreceivedAcksResponse, error) {
-	return k.ChannelKeeper.UnreceivedAcks(c, req)
-}
-
-// NextSequenceReceive implements the IBC QueryServer interface
-func (k Keeper) NextSequenceReceive(c context.Context, req *channeltypes.QueryNextSequenceReceiveRequest) (*channeltypes.QueryNextSequenceReceiveResponse, error) {
-	return k.ChannelKeeper.NextSequenceReceive(c, req)
-}
-
-// NextSequenceSend implements the IBC QueryServer interface
-func (k Keeper) NextSequenceSend(c context.Context, req *channeltypes.QueryNextSequenceSendRequest) (*channeltypes.QueryNextSequenceSendResponse, error) {
-	return k.ChannelKeeper.NextSequenceSend(c, req)
-}
-
-// UpgradeError implements the IBC QueryServer interface
-func (k Keeper) UpgradeError(c context.Context, req *channeltypes.QueryUpgradeErrorRequest) (*channeltypes.QueryUpgradeErrorResponse, error) {
-	return k.ChannelKeeper.UpgradeErrorReceipt(c, req)
-}
-
-// Upgrade implements the IBC QueryServer interface
-func (k Keeper) Upgrade(c context.Context, req *channeltypes.QueryUpgradeRequest) (*channeltypes.QueryUpgradeResponse, error) {
-	return k.ChannelKeeper.Upgrade(c, req)
-}
-
-// ChannelParams implements the IBC QueryServer interface
-func (k Keeper) ChannelParams(c context.Context, req *channeltypes.QueryChannelParamsRequest) (*channeltypes.QueryChannelParamsResponse, error) {
-	return k.ChannelKeeper.ChannelParams(c, req)
+	return &types.QueryConnectionParamsResponse{
+		Params: &params,
+	}, nil
 }

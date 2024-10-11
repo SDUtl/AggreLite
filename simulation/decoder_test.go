@@ -3,39 +3,31 @@ package simulation_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/types/kv"
 
-	clienttypes "github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
-	connectiontypes "github.com/T-ragon/ibc-go/v9/modules/core/03-connection/types"
-	channeltypes "github.com/T-ragon/ibc-go/v9/modules/core/04-channel/types"
+	"github.com/T-ragon/ibc-go/v9/modules/core/02-client/simulation"
+	"github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
 	host "github.com/T-ragon/ibc-go/v9/modules/core/24-host"
-	"github.com/T-ragon/ibc-go/v9/modules/core/simulation"
 	ibctm "github.com/T-ragon/ibc-go/v9/modules/light-clients/07-tendermint"
 	"github.com/T-ragon/ibc-go/v9/testing/simapp"
 )
 
 func TestDecodeStore(t *testing.T) {
 	app := simapp.Setup(t, false)
-	dec := simulation.NewDecodeStore(*app.IBCKeeper)
-
 	clientID := "clientidone"
-	connectionID := "connectionidone"
-	channelID := "channelidone"
-	portID := "portidone"
+
+	height := types.NewHeight(0, 10)
 
 	clientState := &ibctm.ClientState{
-		FrozenHeight: clienttypes.NewHeight(0, 10),
+		FrozenHeight: height,
 	}
-	connection := connectiontypes.ConnectionEnd{
-		ClientId: "clientidone",
-		Versions: []*connectiontypes.Version{connectiontypes.NewVersion("1", nil)},
-	}
-	channel := channeltypes.Channel{
-		State:   channeltypes.OPEN,
-		Version: "1.0",
+
+	consState := &ibctm.ConsensusState{
+		Timestamp: time.Now().UTC(),
 	}
 
 	kvPairs := kv.Pairs{
@@ -45,12 +37,8 @@ func TestDecodeStore(t *testing.T) {
 				Value: app.IBCKeeper.ClientKeeper.MustMarshalClientState(clientState),
 			},
 			{
-				Key:   host.ConnectionKey(connectionID),
-				Value: app.IBCKeeper.Codec().MustMarshal(&connection),
-			},
-			{
-				Key:   host.ChannelKey(portID, channelID),
-				Value: app.IBCKeeper.Codec().MustMarshal(&channel),
+				Key:   host.FullConsensusStateKey(clientID, height),
+				Value: app.IBCKeeper.ClientKeeper.MustMarshalConsensusState(consState),
 			},
 			{
 				Key:   []byte{0x99},
@@ -63,18 +51,20 @@ func TestDecodeStore(t *testing.T) {
 		expectedLog string
 	}{
 		{"ClientState", fmt.Sprintf("ClientState A: %v\nClientState B: %v", clientState, clientState)},
-		{"ConnectionEnd", fmt.Sprintf("ConnectionEnd A: %v\nConnectionEnd B: %v", connection, connection)},
-		{"Channel", fmt.Sprintf("Channel A: %v\nChannel B: %v", channel, channel)},
+		{"ConsensusState", fmt.Sprintf("ConsensusState A: %v\nConsensusState B: %v", consState, consState)},
 		{"other", ""},
 	}
 
 	for i, tt := range tests {
 		i, tt := i, tt
 		t.Run(tt.name, func(t *testing.T) {
+			res, found := simulation.NewDecodeStore(app.IBCKeeper.ClientKeeper, kvPairs.Pairs[i], kvPairs.Pairs[i])
 			if i == len(tests)-1 {
-				require.Panics(t, func() { dec(kvPairs.Pairs[i], kvPairs.Pairs[i]) }, tt.name)
+				require.False(t, found, string(kvPairs.Pairs[i].Key))
+				require.Empty(t, res, string(kvPairs.Pairs[i].Key))
 			} else {
-				require.Equal(t, tt.expectedLog, dec(kvPairs.Pairs[i], kvPairs.Pairs[i]), tt.name)
+				require.True(t, found, string(kvPairs.Pairs[i].Key))
+				require.Equal(t, tt.expectedLog, res, string(kvPairs.Pairs[i].Key))
 			}
 		})
 	}

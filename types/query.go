@@ -1,26 +1,66 @@
 package types
 
 import (
-	"github.com/cosmos/gogoproto/grpc"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 
-	client "github.com/T-ragon/ibc-go/v9/modules/core/02-client"
-	clienttypes "github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
-	connection "github.com/T-ragon/ibc-go/v9/modules/core/03-connection"
-	connectiontypes "github.com/T-ragon/ibc-go/v9/modules/core/03-connection/types"
-	channel "github.com/T-ragon/ibc-go/v9/modules/core/04-channel"
-	channeltypes "github.com/T-ragon/ibc-go/v9/modules/core/04-channel/types"
+	"github.com/T-ragon/ibc-go/v9/modules/core/exported"
 )
 
-// QueryServer defines the IBC interfaces that the gRPC query server must implement
-type QueryServer interface {
-	clienttypes.QueryServer
-	connectiontypes.QueryServer
-	channeltypes.QueryServer
+var (
+	_ codectypes.UnpackInterfacesMessage = (*QueryClientStateResponse)(nil)
+	_ codectypes.UnpackInterfacesMessage = (*QueryClientStatesResponse)(nil)
+	_ codectypes.UnpackInterfacesMessage = (*QueryConsensusStateResponse)(nil)
+	_ codectypes.UnpackInterfacesMessage = (*QueryConsensusStatesResponse)(nil)
+)
+
+// UnpackInterfaces implements UnpackInterfacesMesssage.UnpackInterfaces
+func (qcsr QueryClientStatesResponse) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
+	for _, cs := range qcsr.ClientStates {
+		if err := cs.UnpackInterfaces(unpacker); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// RegisterQueryService registers each individual IBC submodule query service
-func RegisterQueryService(server grpc.Server, queryService QueryServer) {
-	client.RegisterQueryService(server, queryService)
-	connection.RegisterQueryService(server, queryService)
-	channel.RegisterQueryService(server, queryService)
+// NewQueryClientStateResponse creates a new QueryClientStateResponse instance.
+func NewQueryClientStateResponse(
+	clientStateAny *codectypes.Any, proof []byte, height Height,
+) *QueryClientStateResponse {
+	return &QueryClientStateResponse{
+		ClientState: clientStateAny,
+		Proof:       proof,
+		ProofHeight: height,
+	}
+}
+
+// UnpackInterfaces implements UnpackInterfacesMesssage.UnpackInterfaces
+func (qcsr QueryClientStateResponse) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
+	return unpacker.UnpackAny(qcsr.ClientState, new(exported.ClientState))
+}
+
+// UnpackInterfaces implements UnpackInterfacesMesssage.UnpackInterfaces
+func (qcsr QueryConsensusStatesResponse) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
+	for _, cs := range qcsr.ConsensusStates {
+		if err := cs.UnpackInterfaces(unpacker); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// NewQueryConsensusStateResponse creates a new QueryConsensusStateResponse instance.
+func NewQueryConsensusStateResponse(
+	consensusStateAny *codectypes.Any, proof []byte, height Height,
+) *QueryConsensusStateResponse {
+	return &QueryConsensusStateResponse{
+		ConsensusState: consensusStateAny,
+		Proof:          proof,
+		ProofHeight:    height,
+	}
+}
+
+// UnpackInterfaces implements UnpackInterfacesMesssage.UnpackInterfaces
+func (qcsr QueryConsensusStateResponse) UnpackInterfaces(unpacker codectypes.AnyUnpacker) error {
+	return unpacker.UnpackAny(qcsr.ConsensusState, new(exported.ConsensusState))
 }

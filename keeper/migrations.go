@@ -3,7 +3,8 @@ package keeper
 import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	clientkeeper "github.com/T-ragon/ibc-go/v9/modules/core/02-client/keeper"
+	connectionv7 "github.com/T-ragon/ibc-go/v9/modules/core/03-connection/migrations/v7"
+	"github.com/T-ragon/ibc-go/v9/modules/core/03-connection/types"
 )
 
 // Migrator is a struct for handling in-place store migrations.
@@ -16,8 +17,24 @@ func NewMigrator(keeper Keeper) Migrator {
 	return Migrator{keeper: keeper}
 }
 
-// Migrate2to3 migrates from version 2 to 3. See 02-client keeper function Migrate2to3.
-func (m Migrator) Migrate2to3(ctx sdk.Context) error {
-	clientMigrator := clientkeeper.NewMigrator(m.keeper.ClientKeeper)
-	return clientMigrator.Migrate2to3(ctx)
+// Migrate3to4 migrates from version 3 to 4.
+// This migration writes the sentinel localhost connection end to state.
+func (m Migrator) Migrate3to4(ctx sdk.Context) error {
+	connectionv7.MigrateLocalhostConnection(ctx, m.keeper)
+	return nil
+}
+
+// MigrateParams migrates from consensus version 4 to 5.
+// This migration takes the parameters that are currently stored and managed by x/params
+// and stores them directly in the ibc module's state.
+func (m Migrator) MigrateParams(ctx sdk.Context) error {
+	var params types.Params
+	m.keeper.legacySubspace.GetParamSet(ctx, &params)
+	if err := params.Validate(); err != nil {
+		return err
+	}
+
+	m.keeper.SetParams(ctx, params)
+	m.keeper.Logger(ctx).Info("successfully migrated connection to self-manage params")
+	return nil
 }

@@ -5,46 +5,52 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client"
 
-	ibcclient "github.com/T-ragon/ibc-go/v9/modules/core/02-client"
-	connection "github.com/T-ragon/ibc-go/v9/modules/core/03-connection"
-	channel "github.com/T-ragon/ibc-go/v9/modules/core/04-channel"
-	ibcexported "github.com/T-ragon/ibc-go/v9/modules/core/exported"
+	"github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
 )
 
-// GetTxCmd returns the transaction commands for this module
-func GetTxCmd() *cobra.Command {
-	ibcTxCmd := &cobra.Command{
-		Use:                        ibcexported.ModuleName,
-		Short:                      "IBC transaction subcommands",
+// GetQueryCmd returns the query commands for IBC clients
+func GetQueryCmd() *cobra.Command {
+	queryCmd := &cobra.Command{
+		Use:                        types.SubModuleName,
+		Short:                      "IBC client query subcommands",
 		DisableFlagParsing:         true,
 		SuggestionsMinimumDistance: 2,
 		RunE:                       client.ValidateCmd,
 	}
 
-	ibcTxCmd.AddCommand(
-		ibcclient.GetTxCmd(),
-		channel.GetTxCmd(),
+	queryCmd.AddCommand(
+		GetCmdQueryClientStates(),
+		GetCmdQueryClientState(),
+		GetCmdQueryClientStatus(),
+		GetCmdQueryConsensusStates(),
+		GetCmdQueryConsensusStateHeights(),
+		GetCmdQueryConsensusState(),
+		GetCmdQueryHeader(),
+		GetCmdSelfConsensusState(),
+		GetCmdClientParams(),
 	)
 
-	return ibcTxCmd
+	return queryCmd
 }
 
-// GetQueryCmd returns the cli query commands for this module
-func GetQueryCmd() *cobra.Command {
-	// Group ibc queries under a subcommand
-	ibcQueryCmd := &cobra.Command{
-		Use:                        ibcexported.ModuleName,
-		Short:                      "Querying commands for the IBC module",
+// NewTxCmd returns the command to create and handle IBC clients
+func NewTxCmd() *cobra.Command {
+	txCmd := &cobra.Command{
+		Use:                        types.SubModuleName,
+		Short:                      "IBC client transaction subcommands",
 		DisableFlagParsing:         true,
 		SuggestionsMinimumDistance: 2,
 		RunE:                       client.ValidateCmd,
 	}
 
-	ibcQueryCmd.AddCommand(
-		ibcclient.GetQueryCmd(),
-		connection.GetQueryCmd(),
-		channel.GetQueryCmd(),
+	txCmd.AddCommand(
+		newCreateClientCmd(),
+		newUpdateClientCmd(),
+		newSubmitMisbehaviourCmd(), // Deprecated
+		newUpgradeClientCmd(),
+		newSubmitRecoverClientProposalCmd(),
+		newScheduleIBCUpgradeProposalCmd(),
 	)
 
-	return ibcQueryCmd
+	return txCmd
 }

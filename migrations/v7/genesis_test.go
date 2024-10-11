@@ -1,47 +1,19 @@
 package v7_test
 
 import (
-	"testing"
-
-	testifysuite "github.com/stretchr/testify/suite"
+	"encoding/json"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
-	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 
 	ibcclient "github.com/T-ragon/ibc-go/v9/modules/core/02-client"
-	clientv7 "github.com/T-ragon/ibc-go/v9/modules/core/02-client/migrations/v7"
-	clienttypes "github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
+	v7 "github.com/T-ragon/ibc-go/v9/modules/core/02-client/migrations/v7"
+	"github.com/T-ragon/ibc-go/v9/modules/core/02-client/types"
 	host "github.com/T-ragon/ibc-go/v9/modules/core/24-host"
 	ibcexported "github.com/T-ragon/ibc-go/v9/modules/core/exported"
-	v7 "github.com/T-ragon/ibc-go/v9/modules/core/migrations/v7"
-	"github.com/T-ragon/ibc-go/v9/modules/core/types"
 	ibctesting "github.com/T-ragon/ibc-go/v9/testing"
 )
 
-type MigrationsV7TestSuite struct {
-	testifysuite.Suite
-
-	coordinator *ibctesting.Coordinator
-
-	// testing chains used for convenience and readability
-	chainA *ibctesting.TestChain
-	chainB *ibctesting.TestChain
-}
-
-// TestMigrationsV7TestSuite runs all the tests within this package.
-func TestMigrationsV7TestSuite(t *testing.T) {
-	testifysuite.Run(t, new(MigrationsV7TestSuite))
-}
-
-// SetupTest creates a coordinator with 2 test chains.
-func (suite *MigrationsV7TestSuite) SetupTest() {
-	suite.coordinator = ibctesting.NewCoordinator(suite.T(), 2)
-	suite.chainA = suite.coordinator.GetChain(ibctesting.GetChainID(1))
-	suite.chainB = suite.coordinator.GetChain(ibctesting.GetChainID(2))
-}
-
-// NOTE: this test is mainly copied from 02-client/migrations/v7/genesis_test.go
 func (suite *MigrationsV7TestSuite) TestMigrateGenesisSolomachine() {
 	// create tendermint clients
 	for i := 0; i < 3; i++ {
@@ -67,14 +39,14 @@ func (suite *MigrationsV7TestSuite) TestMigrateGenesisSolomachine() {
 	// NOTE: we cannot use 'ExportGenesis' for the solo machines since we are
 	// using client states and consensus states which do not implement the exported.ClientState
 	// and exported.ConsensusState interface
-	var clients []clienttypes.IdentifiedClientState
+	var clients []types.IdentifiedClientState
 	for _, sm := range []*ibctesting.Solomachine{solomachine, solomachineMulti} {
 		clientState := sm.ClientState()
 
 		// generate old client state proto definition
-		legacyClientState := &clientv7.ClientState{
+		legacyClientState := &v7.ClientState{
 			Sequence: clientState.Sequence,
-			ConsensusState: &clientv7.ConsensusState{
+			ConsensusState: &v7.ConsensusState{
 				PublicKey:   clientState.ConsensusState.PublicKey,
 				Diversifier: clientState.ConsensusState.Diversifier,
 				Timestamp:   clientState.ConsensusState.Timestamp,
@@ -87,15 +59,16 @@ func (suite *MigrationsV7TestSuite) TestMigrateGenesisSolomachine() {
 		suite.Require().NoError(err)
 		suite.Require().NotNil(protoAny)
 
-		clients = append(clients, clienttypes.IdentifiedClientState{
+		clients = append(clients, types.IdentifiedClientState{
 			ClientId:    sm.ClientID,
 			ClientState: protoAny,
 		})
 
 		// set in store for ease of determining expected genesis
 		clientStore := suite.chainA.App.GetIBCKeeper().ClientKeeper.ClientStore(suite.chainA.GetContext(), sm.ClientID)
+
 		cdc := suite.chainA.App.AppCodec().(*codec.ProtoCodec)
-		clientv7.RegisterInterfaces(cdc.InterfaceRegistry())
+		v7.RegisterInterfaces(cdc.InterfaceRegistry())
 
 		bz, err := cdc.MarshalInterface(legacyClientState)
 		suite.Require().NoError(err)
@@ -109,19 +82,19 @@ func (suite *MigrationsV7TestSuite) TestMigrateGenesisSolomachine() {
 		bz, err = cdc.MarshalInterface(legacyClientState.ConsensusState)
 		suite.Require().NoError(err)
 
-		var consensusStates []clienttypes.ConsensusStateWithHeight
+		var consensusStates []types.ConsensusStateWithHeight
 
 		// set consensus states in store and genesis
-		for i := uint64(0); i < 10; i++ {
-			height := clienttypes.NewHeight(1, i)
+		for i := uint64(0); i < numCreations; i++ {
+			height := types.NewHeight(1, i)
 			clientStore.Set(host.ConsensusStateKey(height), bz)
-			consensusStates = append(consensusStates, clienttypes.ConsensusStateWithHeight{
+			consensusStates = append(consensusStates, types.ConsensusStateWithHeight{
 				Height:         height,
 				ConsensusState: protoAny,
 			})
 		}
 
-		clientGenState.ClientsConsensus = append(clientGenState.ClientsConsensus, clienttypes.ClientConsensusStates{
+		clientGenState.ClientsConsensus = append(clientGenState.ClientsConsensus, types.ClientConsensusStates{
 			ClientId:        sm.ClientID,
 			ConsensusStates: consensusStates,
 		})
@@ -133,33 +106,34 @@ func (suite *MigrationsV7TestSuite) TestMigrateGenesisSolomachine() {
 	// migrate store get expected genesis
 	// store migration and genesis migration should produce identical results
 	// NOTE: tendermint clients are not pruned in genesis so the test should not have expired tendermint clients
-	err := clientv7.MigrateStore(suite.chainA.GetContext(), suite.chainA.GetSimApp().GetKey(ibcexported.StoreKey), suite.chainA.App.AppCodec(), suite.chainA.GetSimApp().IBCKeeper.ClientKeeper)
+	err := v7.MigrateStore(suite.chainA.GetContext(), suite.chainA.GetSimApp().GetKey(ibcexported.StoreKey), suite.chainA.App.AppCodec(), suite.chainA.GetSimApp().IBCKeeper.ClientKeeper)
 	suite.Require().NoError(err)
 	expectedClientGenState := ibcclient.ExportGenesis(suite.chainA.GetContext(), suite.chainA.App.GetIBCKeeper().ClientKeeper)
 
-	cdc := suite.chainA.App.AppCodec().(*codec.ProtoCodec)
+	cdc, ok := suite.chainA.App.AppCodec().(codec.ProtoCodecMarshaler)
+	suite.Require().True(ok)
 
-	// NOTE: these lines are added in comparison to 02-client/migrations/v7/genesis_test.go
-	// generate appState with old ibc genesis state
-	appState := genutiltypes.AppMap{}
-	ibcGenState := types.DefaultGenesisState()
-	ibcGenState.ClientGenesis = clientGenState
-
-	// ensure tests pass even if the legacy solo machine is already registered
-	clientv7.RegisterInterfaces(cdc.InterfaceRegistry())
-	appState[ibcexported.ModuleName] = cdc.MustMarshalJSON(ibcGenState)
-
-	// NOTE: genesis time isn't updated since we aren't testing for tendermint consensus state pruning
-	migrated, err := v7.MigrateGenesis(appState, cdc)
+	migrated, err := v7.MigrateGenesis(&clientGenState, cdc)
 	suite.Require().NoError(err)
 
-	expectedAppState := genutiltypes.AppMap{}
-	expectedIBCGenState := types.DefaultGenesisState()
-	expectedIBCGenState.ClientGenesis = expectedClientGenState
-
-	bz, err := cdc.MarshalJSON(expectedIBCGenState)
+	bz, err := cdc.MarshalJSON(&expectedClientGenState)
 	suite.Require().NoError(err)
-	expectedAppState[ibcexported.ModuleName] = bz
 
-	suite.Require().Equal(expectedAppState, migrated)
+	// Indent the JSON bz correctly.
+	var jsonObj map[string]interface{}
+	err = json.Unmarshal(bz, &jsonObj)
+	suite.Require().NoError(err)
+	expectedIndentedBz, err := json.MarshalIndent(jsonObj, "", "\t")
+	suite.Require().NoError(err)
+
+	bz, err = cdc.MarshalJSON(migrated)
+	suite.Require().NoError(err)
+
+	// Indent the JSON bz correctly.
+	err = json.Unmarshal(bz, &jsonObj)
+	suite.Require().NoError(err)
+	indentedBz, err := json.MarshalIndent(jsonObj, "", "\t")
+	suite.Require().NoError(err)
+
+	suite.Require().Equal(string(expectedIndentedBz), string(indentedBz))
 }
